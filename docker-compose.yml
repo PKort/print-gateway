@@ -1,0 +1,38 @@
+services:
+  print-gateway:
+    build: .
+    image: print-gateway:latest
+    container_name: print_gateway
+    restart: unless-stopped
+    environment:
+      CUPS_SERVER: /run/cups/cups.sock
+      TZ: Europe/Warsaw
+      PRINTER_NAME: LJ4000
+      MAX_UPLOAD_MB: "50"
+      SECRET_KEY: ${SECRET_KEY}
+      MQTT_HOST: mqtt
+      MQTT_PORT: "1883"
+      MQTT_USERNAME: print_gateway
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      PRINTER_HOST: 192.168.0.8
+    volumes:
+      - /run/cups:/run/cups:ro
+    ports:
+      - "127.0.0.1:3030:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - default
+      - ha-net
+
+networks:
+  ha-net:
+    external: true

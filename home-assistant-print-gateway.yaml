@@ -1,0 +1,43 @@
+print_gateway:
+  automation:
+    - id: print_gateway_printer_power_control
+      alias: Print Gateway - sterowanie zasilaniem drukarki
+      description: Przyjmuje lokalne polecenia MQTT z aplikacji Print Gateway.
+      triggers:
+        - trigger: mqtt
+          topic: print-gateway/printer/power/set
+      conditions:
+        - condition: template
+          value_template: "{{ trigger.payload | upper in ['ON', 'OFF'] }}"
+      actions:
+        - choose:
+            - conditions: "{{ trigger.payload | upper == 'ON' }}"
+              sequence:
+                - action: switch.turn_on
+                  target:
+                    entity_id: switch.gniazdko_drukarki
+            - conditions: "{{ trigger.payload | upper == 'OFF' }}"
+              sequence:
+                - action: switch.turn_off
+                  target:
+                    entity_id: switch.gniazdko_drukarki
+      mode: restart
+
+    - id: print_gateway_printer_power_state
+      alias: Print Gateway - publikacja stanu drukarki
+      description: Publikuje stan gniazdka drukarki dla lokalnej aplikacji Print Gateway.
+      triggers:
+        - trigger: state
+          entity_id: switch.gniazdko_drukarki
+        - trigger: homeassistant
+          event: start
+        - trigger: mqtt
+          topic: print-gateway/printer/power/get
+      actions:
+        - action: mqtt.publish
+          data:
+            topic: print-gateway/printer/power/state
+            payload: "{{ states('switch.gniazdko_drukarki') }}"
+            qos: 1
+            retain: true
+      mode: restart
