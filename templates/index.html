@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <title>Print Gateway</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="brand">
+        <div class="mark" aria-hidden="true">P</div>
+        <div><h1>Print Gateway</h1><p>HP LaserJet 4000 · A4</p></div>
+      </div>
+      <div class="status" id="status"><span class="dot"></span><span>Sprawdzanie…</span></div>
+    </header>
+
+    <section class="workspace">
+      <form id="print-form">
+        <label class="drop" id="drop-zone" for="file">
+          <input id="file" name="file" type="file" accept="application/pdf,.pdf" required>
+          <span class="drop-icon" aria-hidden="true">PDF</span>
+          <strong id="file-label">Wybierz PDF lub przeciągnij go tutaj</strong>
+          <small>Maksymalnie {{ max_upload_mb }} MB</small>
+        </label>
+
+        <div class="options">
+          <label><span>Liczba kopii</span><input name="copies" type="number" min="1" max="20" value="1"></label>
+          <label><span>Jakość</span><select name="resolution"><option value="600">600 dpi</option><option value="300">300 dpi — szybciej</option></select></label>
+          <label><span>Strony</span><select name="duplex"><option value="None">Jednostronnie</option><option value="DuplexNoTumble">Dwustronnie, długi bok</option><option value="DuplexTumble">Dwustronnie, krótki bok</option></select></label>
+          <label class="range-option"><span>Zakres stron</span><input name="page_ranges" type="text" inputmode="numeric" placeholder="Wszystkie, np. 1-3, 5"></label>
+          <label><span>Stron na arkuszu</span><select name="number_up"><option value="1">1 strona</option><option value="2">2 strony</option><option value="4">4 strony</option><option value="6">6 stron</option><option value="9">9 stron</option><option value="16">16 stron</option></select></label>
+        </div>
+
+        <button class="primary" type="submit" id="submit" disabled>Drukuj dokument</button>
+        <div class="message" id="message" role="status" aria-live="polite"></div>
+      </form>
+
+      <aside>
+        <section class="power-card">
+          <div><span class="eyebrow">Zasilanie</span><strong id="power-state">Sprawdzanie…</strong></div>
+          <div class="power-actions">
+            <button id="power-on" type="button">Włącz</button>
+            <button id="power-off" type="button">Wyłącz</button>
+          </div>
+        </section>
+        <div class="panel-head"><h2>Kolejka</h2><button class="refresh" id="refresh" type="button">Odśwież</button></div>
+        <div id="active-jobs" class="jobs"><div class="empty">Brak aktywnych zadań</div></div>
+        <div class="history-title">Ostatnio zakończone</div>
+        <div id="completed-jobs" class="jobs compact"><div class="empty">Brak historii</div></div>
+      </aside>
+    </section>
+  </main>
+
+  <script>window.GATEWAY = { csrf: {{ csrf_token|tojson }} };</script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
