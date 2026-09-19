@@ -15,6 +15,7 @@ services:
       MQTT_USERNAME: print_gateway
       MQTT_PASSWORD: ${MQTT_PASSWORD}
       PRINTER_HOST: 192.168.0.8
+      COLOR_PRINTER_HOST: 192.168.0.7
     volumes:
       - /run/cups:/run/cups:ro
     ports:

@@ -41,3 +41,45 @@ print_gateway:
             qos: 1
             retain: true
       mode: restart
+
+    - id: print_gateway_color_printer_power_control
+      alias: Print Gateway - sterowanie zasilaniem drukarki kolorowej
+      description: Przyjmuje lokalne polecenia MQTT dla drukarki kolorowej.
+      triggers:
+        - trigger: mqtt
+          topic: print-gateway/printer-color/power/set
+      conditions:
+        - condition: template
+          value_template: "{{ trigger.payload | upper in ['ON', 'OFF'] }}"
+      actions:
+        - choose:
+            - conditions: "{{ trigger.payload | upper == 'ON' }}"
+              sequence:
+                - action: switch.turn_on
+                  target:
+                    entity_id: switch.gniazdko_drukarki_kolor
+            - conditions: "{{ trigger.payload | upper == 'OFF' }}"
+              sequence:
+                - action: switch.turn_off
+                  target:
+                    entity_id: switch.gniazdko_drukarki_kolor
+      mode: restart
+
+    - id: print_gateway_color_printer_power_state
+      alias: Print Gateway - publikacja stanu drukarki kolorowej
+      description: Publikuje stan gniazdka drukarki kolorowej dla Print Gateway.
+      triggers:
+        - trigger: state
+          entity_id: switch.gniazdko_drukarki_kolor
+        - trigger: homeassistant
+          event: start
+        - trigger: mqtt
+          topic: print-gateway/printer-color/power/get
+      actions:
+        - action: mqtt.publish
+          data:
+            topic: print-gateway/printer-color/power/state
+            payload: "{{ states('switch.gniazdko_drukarki_kolor') }}"
+            qos: 1
+            retain: true
+      mode: restart

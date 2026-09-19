@@ -11,15 +11,34 @@ from flask import Flask, jsonify, render_template, request, session
 import paho.mqtt.client as mqtt
 
 
-PRINTER = os.environ.get("PRINTER_NAME", "LJ4000")
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "50"))
-PRINTER_HOST = os.environ.get("PRINTER_HOST", "192.168.0.8")
+DEFAULT_PRINTER = os.environ.get("PRINTER_NAME", "LJ4000")
+PRINTERS = {
+    "LJ4000": {
+        "label": "HP LaserJet 4000 DTN",
+        "host": os.environ.get("PRINTER_HOST", "192.168.0.8"),
+        "color": False,
+        "power_topics": {
+            "command": "print-gateway/printer/power/set",
+            "state": "print-gateway/printer/power/state",
+            "get": "print-gateway/printer/power/get",
+        },
+        "default_duplex": "DuplexNoTumble",
+    },
+    "HP477FDN": {
+        "label": "HP Color LaserJet MFP M477fdn",
+        "host": os.environ.get("COLOR_PRINTER_HOST", "192.168.0.7"),
+        "color": True,
+        "power_topics": {
+            "command": "print-gateway/printer-color/power/set",
+            "state": "print-gateway/printer-color/power/state",
+            "get": "print-gateway/printer-color/power/get",
+        },
+        "default_duplex": "DuplexNoTumble",
+    },
+}
 MQTT_HOST = os.environ.get("MQTT_HOST", "mqtt")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
-POWER_COMMAND_TOPIC = "print-gateway/printer/power/set"
-POWER_STATE_TOPIC = "print-gateway/printer/power/state"
-POWER_GET_TOPIC = "print-gateway/printer/power/get"
-JOB_RE = re.compile(rf"^{re.escape(PRINTER)}-(\d+)\s+(\S+)\s+(\d+)\s+(.*)$")
 PAGE_RANGES_RE = re.compile(r"^\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$")
 
 app = Flask(__name__)
@@ -27,28 +46,41 @@ app.secret_key = os.environ["SECRET_KEY"]
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 power_lock = threading.Lock()
-power = {"state": "unknown", "connected": False, "updatedAt": None}
+power = {
+    name: {"state": "unknown", "connected": False, "updatedAt": None}
+    for name in PRINTERS
+}
 
 
 def on_mqtt_connect(client, _userdata, _flags, reason_code, _properties):
     with power_lock:
-        power["connected"] = reason_code == 0
+        for state in power.values():
+            state["connected"] = reason_code == 0
     if reason_code == 0:
-        client.subscribe(POWER_STATE_TOPIC, qos=1)
-        client.publish(POWER_GET_TOPIC, "state", qos=1)
+        for config in PRINTERS.values():
+            topics = config["power_topics"]
+            client.subscribe(topics["state"], qos=1)
+            client.publish(topics["get"], "state", qos=1)
 
 
 def on_mqtt_disconnect(_client, _userdata, _disconnect_flags, _reason_code, _properties):
     with power_lock:
-        power["connected"] = False
+        for state in power.values():
+            state["connected"] = False
 
 
 def on_mqtt_message(_client, _userdata, message):
     state = message.payload.decode("utf-8", errors="replace").strip().lower()
     if state not in {"on", "off", "unavailable", "unknown"}:
         return
+    printer = next(
+        (name for name, config in PRINTERS.items() if message.topic == config["power_topics"]["state"]),
+        None,
+    )
+    if not printer:
+        return
     with power_lock:
-        power.update(state=state, updatedAt=datetime.now().isoformat(timespec="seconds"))
+        power[printer].update(state=state, updatedAt=datetime.now().isoformat(timespec="seconds"))
 
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="print-gateway")
@@ -87,17 +119,25 @@ def require_csrf():
     return None
 
 
-def parse_jobs(output: str) -> list[dict]:
+def printer_config(name: str | None) -> tuple[str, dict]:
+    selected = name or DEFAULT_PRINTER
+    if selected not in PRINTERS:
+        raise ValueError
+    return selected, PRINTERS[selected]
+
+
+def parse_jobs(output: str, printer: str) -> list[dict]:
+    job_re = re.compile(rf"^{re.escape(printer)}-(\d+)\s+(\S+)\s+(\d+)\s+(.*)$")
     jobs = []
     for line in output.splitlines():
-        match = JOB_RE.match(line.strip())
+        match = job_re.match(line.strip())
         if not match:
             continue
         job_id, owner, size, submitted = match.groups()
         jobs.append(
             {
                 "id": int(job_id),
-                "name": f"{PRINTER}-{job_id}",
+                "name": f"{printer}-{job_id}",
                 "owner": owner,
                 "size": int(size),
                 "submitted": submitted,
@@ -121,23 +161,24 @@ def normalize_page_ranges(value: str) -> str | None:
     return compact
 
 
-def printer_reachable() -> bool:
+def printer_reachable(host: str) -> bool:
     try:
-        with socket.create_connection((PRINTER_HOST, 9100), timeout=0.7):
+        with socket.create_connection((host, 9100), timeout=0.7):
             return True
     except OSError:
         return False
 
 
-def printer_status() -> dict:
-    state = cups("lpstat", "-p", PRINTER, "-l")
-    active = cups("lpstat", "-o", PRINTER)
-    completed = cups("lpstat", "-W", "completed", "-o", PRINTER)
+def printer_status(printer: str) -> dict:
+    printer, config = printer_config(printer)
+    state = cups("lpstat", "-p", printer, "-l")
+    active = cups("lpstat", "-o", printer)
+    completed = cups("lpstat", "-W", "completed", "-o", printer)
     text = (state.stdout or state.stderr).strip()
     lower = text.lower()
+    reachable = printer_reachable(config["host"])
     with power_lock:
-        power_snapshot = dict(power)
-    reachable = printer_reachable() if power_snapshot["state"] == "on" else False
+        power_snapshot = {**power[printer], "managed": True}
     if power_snapshot["state"] == "off":
         status = "off"
         label = "Wyłączona"
@@ -157,12 +198,14 @@ def printer_status() -> dict:
         status = "warning"
         label = "Wymaga uwagi"
     return {
-        "printer": PRINTER,
+        "printer": printer,
+        "printerLabel": config["label"],
+        "color": config["color"],
         "status": status,
         "label": label,
         "detail": text,
-        "active": parse_jobs(active.stdout),
-        "completed": parse_jobs(completed.stdout)[:8],
+        "active": parse_jobs(active.stdout, printer),
+        "completed": parse_jobs(completed.stdout, printer)[:8],
         "checkedAt": datetime.now().isoformat(timespec="seconds"),
         "power": {**power_snapshot, "printerReachable": reachable},
     }
@@ -172,7 +215,8 @@ def printer_status() -> dict:
 def index():
     return render_template(
         "index.html",
-        printer=PRINTER,
+        printers=[{"name": name, **config} for name, config in PRINTERS.items()],
+        default_printer=DEFAULT_PRINTER,
         max_upload_mb=MAX_UPLOAD_MB,
         csrf_token=csrf_token(),
     )
@@ -180,7 +224,10 @@ def index():
 
 @app.get("/api/status")
 def api_status():
-    return jsonify(printer_status())
+    try:
+        return jsonify(printer_status(request.args.get("printer")))
+    except ValueError:
+        return jsonify(error="Nieznana drukarka."), 400
 
 
 @app.post("/api/print")
@@ -188,6 +235,11 @@ def api_print():
     denied = require_csrf()
     if denied:
         return denied
+
+    try:
+        printer, config = printer_config(request.form.get("printer"))
+    except ValueError:
+        return jsonify(error="Nieznana drukarka."), 400
 
     upload = request.files.get("file")
     if not upload or not upload.filename:
@@ -197,6 +249,7 @@ def api_print():
     resolution = request.form.get("resolution", "600")
     duplex = request.form.get("duplex", "None")
     number_up = request.form.get("number_up", "1")
+    color_mode = request.form.get("color_mode", "color")
     try:
         page_ranges = normalize_page_ranges(request.form.get("page_ranges", ""))
     except ValueError:
@@ -209,6 +262,8 @@ def api_print():
         return jsonify(error="Nieprawidłowe ustawienie druku dwustronnego."), 400
     if number_up not in {"1", "2", "4", "6", "9", "16"}:
         return jsonify(error="Nieprawidłowa liczba stron na arkuszu."), 400
+    if color_mode not in {"color", "monochrome"}:
+        return jsonify(error="Nieprawidłowy tryb koloru."), 400
 
     original_name = Path(upload.filename).name
     title = re.sub(r"[^\w .()\-]+", "_", Path(original_name).stem, flags=re.UNICODE)[:80]
@@ -240,7 +295,7 @@ def api_print():
         command = [
             "lp",
             "-d",
-            PRINTER,
+            printer,
             "-t",
             title or "Dokument PDF",
             "-n",
@@ -256,6 +311,8 @@ def api_print():
             "-o",
             "number-up-layout=lrtb",
         ]
+        if config["color"]:
+            command.extend(["-o", "ColorModel=RGB" if color_mode == "color" else "ColorModel=Gray"])
         command.append(str(print_path))
         result = cups(*command, timeout=30)
 
@@ -276,25 +333,34 @@ def api_power():
     denied = require_csrf()
     if denied:
         return denied
-    action = (request.get_json(silent=True) or {}).get("action")
+    payload = request.get_json(silent=True) or {}
+    action = payload.get("action")
+    try:
+        _printer, config = printer_config(payload.get("printer"))
+    except ValueError:
+        return jsonify(error="Nieznana drukarka."), 400
     if action not in {"on", "off"}:
         return jsonify(error="Nieprawidłowe polecenie zasilania."), 400
     with power_lock:
-        connected = power["connected"]
+        connected = power[_printer]["connected"]
     if not connected:
         return jsonify(error="Brak połączenia z Home Assistantem."), 503
-    result = mqtt_client.publish(POWER_COMMAND_TOPIC, action.upper(), qos=1)
+    result = mqtt_client.publish(config["power_topics"]["command"], action.upper(), qos=1)
     if result.rc != mqtt.MQTT_ERR_SUCCESS:
         return jsonify(error="Nie udało się przekazać polecenia do Home Assistanta."), 502
     return jsonify(ok=True, message="Polecenie zostało przekazane do Home Assistanta."), 202
 
 
-@app.post("/api/jobs/<int:job_id>/cancel")
-def cancel_job(job_id: int):
+@app.post("/api/jobs/<printer>/<int:job_id>/cancel")
+def cancel_job(printer: str, job_id: int):
     denied = require_csrf()
     if denied:
         return denied
-    result = cups("cancel", f"{PRINTER}-{job_id}")
+    try:
+        printer, _config = printer_config(printer)
+    except ValueError:
+        return jsonify(error="Nieznana drukarka."), 400
+    result = cups("cancel", f"{printer}-{job_id}")
     if result.returncode != 0:
         return jsonify(error=(result.stderr or "Nie udało się anulować zadania.").strip()), 400
     return jsonify(ok=True)
