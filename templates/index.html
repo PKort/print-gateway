@@ -13,45 +13,47 @@
     <header>
       <div class="brand">
         <div class="mark" aria-hidden="true">P</div>
-        <div><h1>Print Gateway</h1><p>HP LaserJet 4000 · A4</p></div>
+        <div><h1>Print Gateway</h1><p id="printer-subtitle">Drukarki domowe · A4</p></div>
       </div>
       <div class="status" id="status"><span class="dot"></span><span>Sprawdzanie…</span></div>
     </header>
 
     <section class="workspace">
-      <form id="print-form">
-        <label class="drop" id="drop-zone" for="file">
-          <input id="file" name="file" type="file" accept="application/pdf,.pdf" required>
-          <span class="drop-icon" aria-hidden="true">PDF</span>
-          <strong id="file-label">Wybierz PDF lub przeciągnij go tutaj</strong>
-          <small>Maksymalnie {{ max_upload_mb }} MB</small>
-        </label>
-
-        <div class="options">
-          <label><span>Liczba kopii</span><input name="copies" type="number" min="1" max="20" value="1"></label>
-          <label><span>Jakość</span><select name="resolution"><option value="600">600 dpi</option><option value="300">300 dpi — szybciej</option></select></label>
-          <label><span>Strony</span><select name="duplex"><option value="None">Jednostronnie</option><option value="DuplexNoTumble">Dwustronnie, długi bok</option><option value="DuplexTumble">Dwustronnie, krótki bok</option></select></label>
-          <label class="range-option"><span>Zakres stron</span><input name="page_ranges" type="text" inputmode="numeric" placeholder="Wszystkie, np. 1-3, 5"></label>
-          <label><span>Stron na arkuszu</span><select name="number_up"><option value="1">1 strona</option><option value="2">2 strony</option><option value="4">4 strony</option><option value="6">6 stron</option><option value="9">9 stron</option><option value="16">16 stron</option></select></label>
-        </div>
-
-        <button class="primary" type="submit" id="submit" disabled>Drukuj dokument</button>
-        <div class="message" id="message" role="status" aria-live="polite"></div>
-      </form>
-
-      <aside>
-        <section class="power-card">
-          <div><span class="eyebrow">Zasilanie</span><strong id="power-state">Sprawdzanie…</strong></div>
-          <div class="power-actions">
-            <button id="power-on" type="button">Włącz</button>
-            <button id="power-off" type="button">Wyłącz</button>
+      <form id="print-form" class="print-workspace">
+        <section class="settings-card">
+          <div class="section-heading"><span class="step">1</span><div><h2>Drukarka i ustawienia</h2><p>Wybierz urządzenie oraz parametry wydruku.</p></div></div>
+          <div class="options">
+            <label class="printer-option"><span>Drukarka</span><select name="printer" id="printer-select">{% for item in printers %}<option value="{{ item.name }}" data-label="{{ item.label }}" data-color="{{ 'true' if item.color else 'false' }}" data-default-duplex="{{ item.default_duplex }}" {% if item.name == default_printer %}selected{% endif %}>{{ item.label }} · Gabinet Dół</option>{% endfor %}</select></label>
+            <label><span>Liczba kopii</span><input name="copies" type="number" min="1" max="20" value="1"></label>
+            <label><span>Jakość</span><select name="resolution"><option value="600">600 dpi</option><option value="300">300 dpi — szybciej</option></select></label>
+            <label><span>Strony</span><select name="duplex" id="duplex-select"><option value="None">Jednostronnie</option><option value="DuplexNoTumble">Dwustronnie, długi bok</option><option value="DuplexTumble">Dwustronnie, krótki bok</option></select></label>
+            <label id="color-option"><span>Kolor</span><select name="color_mode"><option value="color">Kolor</option><option value="monochrome">Czarno-biały</option></select></label>
+            <label class="range-option"><span>Zakres stron</span><input name="page_ranges" type="text" inputmode="numeric" placeholder="Wszystkie, np. 1-3, 5"></label>
+            <label><span>Stron na arkuszu</span><select name="number_up"><option value="1">1 strona</option><option value="2">2 strony</option><option value="4">4 strony</option><option value="6">6 stron</option><option value="9">9 stron</option><option value="16">16 stron</option></select></label>
           </div>
+
+          <section class="power-card">
+            <div><span class="eyebrow">Zasilanie wybranej drukarki</span><strong id="power-state">Sprawdzanie…</strong></div>
+            <div class="power-actions"><button id="power-on" type="button">Włącz</button><button id="power-off" type="button">Wyłącz</button></div>
+          </section>
+          <div class="panel-head"><h2>Kolejka wybranej drukarki</h2><button class="refresh" id="refresh" type="button">Odśwież</button></div>
+          <div id="active-jobs" class="jobs"><div class="empty">Brak aktywnych zadań</div></div>
+          <div class="history-title">Ostatnio zakończone</div>
+          <div id="completed-jobs" class="jobs compact"><div class="empty">Brak historii</div></div>
         </section>
-        <div class="panel-head"><h2>Kolejka</h2><button class="refresh" id="refresh" type="button">Odśwież</button></div>
-        <div id="active-jobs" class="jobs"><div class="empty">Brak aktywnych zadań</div></div>
-        <div class="history-title">Ostatnio zakończone</div>
-        <div id="completed-jobs" class="jobs compact"><div class="empty">Brak historii</div></div>
-      </aside>
+
+        <section class="document-card">
+          <div class="section-heading"><span class="step">2</span><div><h2>Dokument PDF</h2><p>Dodaj plik, sprawdź ustawienia i wyślij go do kolejki.</p></div></div>
+          <label class="drop" id="drop-zone" for="file">
+            <input id="file" name="file" type="file" accept="application/pdf,.pdf" required>
+            <span class="drop-icon" aria-hidden="true">PDF</span>
+            <strong id="file-label">Wybierz PDF lub przeciągnij go tutaj</strong>
+            <small>Maksymalnie {{ max_upload_mb }} MB</small>
+          </label>
+          <button class="primary" type="submit" id="submit" disabled>Drukuj dokument</button>
+          <div class="message" id="message" role="status" aria-live="polite"></div>
+        </section>
+      </form>
     </section>
   </main>
 
