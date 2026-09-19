@@ -9,6 +9,7 @@ services:
       TZ: Europe/Warsaw
       PRINTER_NAME: LJ4000
       MAX_UPLOAD_MB: "50"
+      DOCUMENT_TTL_MINUTES: "30"
       SECRET_KEY: ${SECRET_KEY}
       MQTT_HOST: mqtt
       MQTT_PORT: "1883"

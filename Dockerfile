@@ -2,7 +2,9 @@ FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cups-client curl qpdf \
+    && apt-get install -y --no-install-recommends \
+       cups-client curl qpdf libreoffice-writer libreoffice-calc libreoffice-impress \
+       fonts-liberation2 fonts-crosextra-carlito fonts-crosextra-caladea \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .

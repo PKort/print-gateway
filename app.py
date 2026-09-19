@@ -1,13 +1,16 @@
 import os
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
 import threading
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request, send_file, session
 import paho.mqtt.client as mqtt
 
 
@@ -40,10 +43,15 @@ PRINTERS = {
 MQTT_HOST = os.environ.get("MQTT_HOST", "mqtt")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 PAGE_RANGES_RE = re.compile(r"^\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$")
+DOCUMENT_TTL_SECONDS = int(os.environ.get("DOCUMENT_TTL_MINUTES", "30")) * 60
+DOCUMENT_ROOT = Path(tempfile.gettempdir()) / "print-gateway-documents"
+OFFICE_EXTENSIONS = {".doc", ".docx", ".odt", ".rtf", ".xls", ".xlsx", ".ods", ".ppt", ".pptx", ".odp"}
+ACCEPTED_EXTENSIONS = OFFICE_EXTENSIONS | {".pdf"}
 
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+DOCUMENT_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
 
 power_lock = threading.Lock()
 power = {
@@ -103,6 +111,43 @@ def cups(*args: str, timeout: int = 20) -> subprocess.CompletedProcess:
         env=env,
         check=False,
     )
+
+
+def remove_document(token: str | None) -> None:
+    if token and re.fullmatch(r"[0-9a-f]{32}", token):
+        shutil.rmtree(DOCUMENT_ROOT / token, ignore_errors=True)
+
+
+def cleanup_documents() -> None:
+    cutoff = time.time() - DOCUMENT_TTL_SECONDS
+    for directory in DOCUMENT_ROOT.iterdir():
+        try:
+            if directory.is_dir() and directory.stat().st_mtime < cutoff:
+                shutil.rmtree(directory, ignore_errors=True)
+        except OSError:
+            continue
+
+
+def current_document(token: str) -> Path | None:
+    if token != session.get("document_token") or not re.fullmatch(r"[0-9a-f]{32}", token):
+        return None
+    path = DOCUMENT_ROOT / token / "preview.pdf"
+    try:
+        if path.is_file() and path.stat().st_mtime < time.time() - DOCUMENT_TTL_SECONDS:
+            remove_document(token)
+            session.pop("document_token", None)
+            return None
+    except OSError:
+        return None
+    return path if path.is_file() else None
+
+
+def pdf_page_count(path: Path) -> int | None:
+    result = cups("qpdf", "--show-npages", str(path), timeout=10)
+    try:
+        return int(result.stdout.strip()) if result.returncode == 0 else None
+    except ValueError:
+        return None
 
 
 def csrf_token() -> str:
@@ -230,6 +275,85 @@ def api_status():
         return jsonify(error="Nieznana drukarka."), 400
 
 
+@app.post("/api/documents")
+def api_prepare_document():
+    denied = require_csrf()
+    if denied:
+        return denied
+    cleanup_documents()
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify(error="Wybierz dokument PDF lub Office."), 400
+    original_name = Path(upload.filename).name
+    extension = Path(original_name).suffix.lower()
+    if extension not in ACCEPTED_EXTENSIONS:
+        return jsonify(error="Obsługiwane są pliki PDF, Word, Excel, PowerPoint, OpenDocument i RTF."), 400
+
+    old_token = session.pop("document_token", None)
+    remove_document(old_token)
+    token = uuid.uuid4().hex
+    workdir = DOCUMENT_ROOT / token
+    workdir.mkdir(mode=0o700)
+    input_path = workdir / f"source{extension}"
+    output_path = workdir / "preview.pdf"
+    try:
+        upload.save(input_path)
+        if extension == ".pdf":
+            with input_path.open("rb") as document:
+                if document.read(5) != b"%PDF-":
+                    raise ValueError("Wybrany plik nie jest prawidłowym dokumentem PDF.")
+            input_path.replace(output_path)
+        else:
+            profile_uri = (workdir / "lo-profile").resolve().as_uri()
+            env = {**os.environ, "HOME": str(workdir), "LANG": "pl_PL.UTF-8", "LC_ALL": "C.UTF-8"}
+            conversion = subprocess.run(
+                [
+                    "libreoffice", "--headless", "--nologo", "--nodefault", "--nofirststartwizard",
+                    "--nolockcheck", f"-env:UserInstallation={profile_uri}", "--convert-to", "pdf",
+                    "--outdir", str(workdir), str(input_path),
+                ],
+                capture_output=True, text=True, timeout=90, env=env, check=False,
+            )
+            generated = workdir / "source.pdf"
+            if conversion.returncode != 0 or not generated.is_file():
+                detail = (conversion.stderr or conversion.stdout).strip()
+                raise ValueError(f"Nie udało się przekonwertować dokumentu.{f' {detail}' if detail else ''}")
+            generated.replace(output_path)
+        pages = pdf_page_count(output_path)
+        if not pages:
+            raise ValueError("Wygenerowany PDF jest uszkodzony lub pusty.")
+        input_path.unlink(missing_ok=True)
+        shutil.rmtree(workdir / "lo-profile", ignore_errors=True)
+        session["document_token"] = token
+        return jsonify(
+            ok=True,
+            token=token,
+            name=original_name,
+            pages=pages,
+            size=output_path.stat().st_size,
+            converted=extension != ".pdf",
+            previewUrl=f"/api/documents/{token}/preview",
+        )
+    except subprocess.TimeoutExpired:
+        remove_document(token)
+        return jsonify(error="Konwersja trwała zbyt długo i została przerwana."), 422
+    except ValueError as error:
+        remove_document(token)
+        return jsonify(error=str(error)), 422
+    except Exception:
+        remove_document(token)
+        app.logger.exception("Document preparation failed")
+        return jsonify(error="Nie udało się przygotować podglądu dokumentu."), 500
+
+
+@app.get("/api/documents/<token>/preview")
+def api_document_preview(token: str):
+    path = current_document(token)
+    if not path:
+        return jsonify(error="Podgląd wygasł. Wybierz dokument ponownie."), 404
+    return send_file(path, mimetype="application/pdf", as_attachment=False, download_name="podglad.pdf", max_age=0)
+
+
 @app.post("/api/print")
 def api_print():
     denied = require_csrf()
@@ -241,9 +365,10 @@ def api_print():
     except ValueError:
         return jsonify(error="Nieznana drukarka."), 400
 
-    upload = request.files.get("file")
-    if not upload or not upload.filename:
-        return jsonify(error="Wybierz plik PDF."), 400
+    token = request.form.get("document_token", "")
+    input_path = current_document(token)
+    if not input_path:
+        return jsonify(error="Podgląd wygasł. Wybierz dokument ponownie."), 400
 
     copies = request.form.get("copies", "1")
     resolution = request.form.get("resolution", "600")
@@ -265,17 +390,10 @@ def api_print():
     if color_mode not in {"color", "monochrome"}:
         return jsonify(error="Nieprawidłowy tryb koloru."), 400
 
-    original_name = Path(upload.filename).name
+    original_name = request.form.get("document_name", "Dokument")
     title = re.sub(r"[^\w .()\-]+", "_", Path(original_name).stem, flags=re.UNICODE)[:80]
     with tempfile.TemporaryDirectory(prefix="print-") as workdir:
-        input_path = Path(workdir) / "input.pdf"
         selected_path = Path(workdir) / "selected.pdf"
-        upload.save(input_path)
-        with input_path.open("rb") as document:
-            signature = document.read(5)
-        if signature != b"%PDF-":
-            return jsonify(error="Wybrany plik nie jest prawidłowym dokumentem PDF."), 400
-
         print_path = input_path
         if page_ranges:
             selection = cups(
@@ -321,6 +439,8 @@ def api_print():
         return jsonify(error=f"CUPS odrzucił zadanie: {message}"), 502
 
     match = re.search(r"request id is (\S+)", result.stdout)
+    remove_document(token)
+    session.pop("document_token", None)
     return jsonify(
         ok=True,
         job=match.group(1) if match else None,

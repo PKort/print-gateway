@@ -43,13 +43,19 @@
         </section>
 
         <section class="document-card">
-          <div class="section-heading"><span class="step">2</span><div><h2>Dokument PDF</h2><p>Dodaj plik, sprawdź ustawienia i wyślij go do kolejki.</p></div></div>
+          <div class="section-heading"><span class="step">2</span><div><h2>Dokument i podgląd</h2><p>Dodaj PDF lub plik Office i zatwierdź wygląd przed drukowaniem.</p></div></div>
           <label class="drop" id="drop-zone" for="file">
-            <input id="file" name="file" type="file" accept="application/pdf,.pdf" required>
-            <span class="drop-icon" aria-hidden="true">PDF</span>
-            <strong id="file-label">Wybierz PDF lub przeciągnij go tutaj</strong>
-            <small>Maksymalnie {{ max_upload_mb }} MB</small>
+            <input id="file" type="file" accept=".pdf,.doc,.docx,.odt,.rtf,.xls,.xlsx,.ods,.ppt,.pptx,.odp">
+            <span class="drop-icon" aria-hidden="true">PLIK</span>
+            <strong id="file-label">Wybierz dokument lub przeciągnij go tutaj</strong>
+            <small>PDF, Word, Excel, PowerPoint · maks. {{ max_upload_mb }} MB</small>
           </label>
+          <section class="preview" id="preview" hidden>
+            <div class="preview-head"><div><strong id="preview-name"></strong><small id="preview-meta"></small></div><div class="preview-actions"><a id="preview-open" target="_blank" rel="noopener">Pełny ekran</a><button id="remove-document" type="button">Zmień plik</button></div></div>
+            <iframe id="preview-frame" title="Podgląd dokumentu PDF"></iframe>
+          </section>
+          <input type="hidden" name="document_token" id="document-token">
+          <input type="hidden" name="document_name" id="document-name">
           <button class="primary" type="submit" id="submit" disabled>Drukuj dokument</button>
           <div class="message" id="message" role="status" aria-live="polite"></div>
         </section>

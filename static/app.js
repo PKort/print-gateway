@@ -5,6 +5,10 @@ const drop = document.querySelector('#drop-zone');
 const submit = document.querySelector('#submit');
 const message = document.querySelector('#message');
 const printerSelect = document.querySelector('#printer-select');
+const preview = document.querySelector('#preview');
+const previewFrame = document.querySelector('#preview-frame');
+const documentToken = document.querySelector('#document-token');
+const documentName = document.querySelector('#document-name');
 
 function selectedPrinter() { return printerSelect.value; }
 function updatePrinterControls(applyDefaults = false) {
@@ -14,10 +18,22 @@ function updatePrinterControls(applyDefaults = false) {
   if (applyDefaults) document.querySelector('#duplex-select').value = option.dataset.defaultDuplex;
 }
 
-function setFile(file) {
+function resetDocument() {
+  fileInput.value=''; documentToken.value=''; documentName.value=''; previewFrame.src='about:blank'; preview.hidden=true; drop.hidden=false;
+  fileLabel.textContent='Wybierz dokument lub przeciągnij go tutaj'; submit.disabled=true;
+}
+async function setFile(file) {
   if (!file) return;
-  const dt = new DataTransfer(); dt.items.add(file); fileInput.files = dt.files;
-  fileLabel.textContent = file.name; submit.disabled = false;
+  submit.disabled=true; fileLabel.textContent=file.name; message.className='message'; message.textContent='Przygotowywanie podglądu…';
+  const body=new FormData(); body.append('file',file);
+  try {
+    const response=await fetch('/api/documents',{method:'POST',headers:{'X-CSRF-Token':window.GATEWAY.csrf},body});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error || 'Nie udało się przygotować dokumentu.');
+    documentToken.value=data.token; documentName.value=data.name; document.querySelector('#preview-name').textContent=data.name;
+    document.querySelector('#preview-meta').textContent=`${data.pages} ${data.pages===1?'strona':'stron'} · ${(data.size/1024/1024).toFixed(1)} MB${data.converted?' · przekonwertowano do PDF':''}`;
+    previewFrame.src=data.previewUrl; document.querySelector('#preview-open').href=data.previewUrl; drop.hidden=true; preview.hidden=false; submit.disabled=false;
+    message.textContent='Sprawdź podgląd, a następnie zatwierdź drukowanie.';
+  } catch(error) { resetDocument(); message.className='message error'; message.textContent=error.message; }
 }
 fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
 ['dragenter','dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('drag'); }));
@@ -49,9 +65,9 @@ form.addEventListener('submit', async e => {
     const response = await fetch('/api/print', { method:'POST', headers:{'X-CSRF-Token':window.GATEWAY.csrf}, body:new FormData(form) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Nie udało się wysłać dokumentu.');
-    const printer = selectedPrinter(); message.className='message success'; message.textContent=`${data.message}${data.job ? ` Numer: ${data.job}.` : ''}`; form.reset(); printerSelect.value=printer; updatePrinterControls(true); fileLabel.textContent='Wybierz PDF lub przeciągnij go tutaj'; await refresh();
+    const printer = selectedPrinter(); message.className='message success'; message.textContent=`${data.message}${data.job ? ` Numer: ${data.job}.` : ''}`; form.reset(); printerSelect.value=printer; updatePrinterControls(true); resetDocument(); await refresh();
   } catch (error) { message.className='message error'; message.textContent=error.message; }
-  finally { submit.textContent='Drukuj dokument'; submit.disabled=!fileInput.files.length; }
+  finally { submit.textContent='Drukuj dokument'; submit.disabled=!documentToken.value; }
 });
 document.addEventListener('click', async e => {
   if (!e.target.matches('[data-job]')) return;
@@ -70,4 +86,5 @@ async function setPower(action) {
 }
 document.querySelector('#power-on').addEventListener('click', () => setPower('on'));
 document.querySelector('#power-off').addEventListener('click', () => setPower('off'));
+document.querySelector('#remove-document').addEventListener('click', resetDocument);
 updatePrinterControls(); refresh(); setInterval(refresh, 5000);
