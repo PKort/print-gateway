@@ -7,8 +7,13 @@ const message = document.querySelector('#message');
 const printerSelect = document.querySelector('#printer-select');
 const preview = document.querySelector('#preview');
 const previewFrame = document.querySelector('#preview-frame');
+const imagePreview = document.querySelector('#image-preview');
 const documentToken = document.querySelector('#document-token');
 const documentName = document.querySelector('#document-name');
+const imageLayout = document.querySelector('#image-layout');
+const imageLayoutMode = document.querySelector('#image-layout-mode');
+const imageHorizontal = document.querySelector('#image-horizontal');
+const imageVertical = document.querySelector('#image-vertical');
 
 function selectedPrinter() { return printerSelect.value; }
 function updatePrinterControls(applyDefaults = false) {
@@ -20,7 +25,7 @@ function updatePrinterControls(applyDefaults = false) {
 }
 
 function resetDocument() {
-  fileInput.value=''; documentToken.value=''; documentName.value=''; previewFrame.src='about:blank'; preview.hidden=true; drop.hidden=false;
+  fileInput.value=''; documentToken.value=''; documentName.value=''; previewFrame.src='about:blank'; imagePreview.removeAttribute('src'); imagePreview.hidden=true; previewFrame.hidden=false; preview.hidden=true; imageLayout.hidden=true; drop.hidden=false;
   fileLabel.textContent='Wybierz dokument lub przeciągnij go tutaj'; submit.disabled=true;
 }
 async function setFile(file) {
@@ -32,7 +37,10 @@ async function setFile(file) {
     const data=await response.json(); if(!response.ok) throw new Error(data.error || 'Nie udało się przygotować dokumentu.');
     documentToken.value=data.token; documentName.value=data.name; document.querySelector('#preview-name').textContent=data.name;
     document.querySelector('#preview-meta').textContent=`${data.pages} ${data.pages===1?'strona':'stron'} · ${(data.size/1024/1024).toFixed(1)} MB${data.converted?' · przekonwertowano do PDF':''}`;
-    previewFrame.src=data.previewUrl; document.querySelector('#preview-open').href=data.previewUrl; drop.hidden=true; preview.hidden=false; submit.disabled=false;
+    imageLayout.hidden=!data.image;
+    if(data.image) { imageLayoutMode.value='contain'; imageHorizontal.value='center'; imageVertical.value='center'; updateImageInfo(data.imageInfo); imagePreview.src=data.imagePreviewUrl; imagePreview.hidden=false; previewFrame.hidden=true; }
+    else { previewFrame.src=data.previewUrl; imagePreview.hidden=true; previewFrame.hidden=false; }
+    document.querySelector('#preview-open').href=data.previewUrl; drop.hidden=true; preview.hidden=false; submit.disabled=false;
     message.textContent='Sprawdź podgląd, a następnie zatwierdź drukowanie.';
   } catch(error) { resetDocument(); message.className='message error'; message.textContent=error.message; }
 }
@@ -40,6 +48,24 @@ fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
 ['dragenter','dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('drag'); }));
 ['dragleave','drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('drag'); }));
 drop.addEventListener('drop', e => setFile(e.dataTransfer.files[0]));
+
+function updateImageInfo(info) {
+  if(!info) return;
+  document.querySelector('#image-info').textContent=`${info.width} × ${info.height} px · ${Math.round(info.dpiX)} DPI · wydruk ${info.printWidthCm} × ${info.printHeightCm} cm · A4 ${info.pageOrientation}`;
+}
+let layoutRequest=0;
+async function updateImageLayout() {
+  if(!documentToken.value || imageLayout.hidden) return;
+  const requestId=++layoutRequest; submit.disabled=true; message.className='message'; message.textContent='Aktualizowanie podglądu…';
+  try {
+    const response=await fetch(`/api/documents/${documentToken.value}/layout`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':window.GATEWAY.csrf},body:JSON.stringify({layout:imageLayoutMode.value,horizontal:imageHorizontal.value,vertical:imageVertical.value})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error || 'Nie udało się zmienić układu zdjęcia.');
+    if(requestId!==layoutRequest) return; updateImageInfo(data.imageInfo); imagePreview.src=data.imagePreviewUrl; document.querySelector('#preview-open').href=data.previewUrl;
+    message.textContent='Sprawdź zaktualizowany podgląd, a następnie zatwierdź drukowanie.';
+  } catch(error) { if(requestId===layoutRequest) { message.className='message error'; message.textContent=error.message; } }
+  finally { if(requestId===layoutRequest) submit.disabled=!documentToken.value; }
+}
+[imageLayoutMode,imageHorizontal,imageVertical].forEach(control=>control.addEventListener('change',updateImageLayout));
 
 function escapeHtml(value) { const d=document.createElement('div'); d.textContent=value; return d.innerHTML; }
 function jobHtml(job, active) {

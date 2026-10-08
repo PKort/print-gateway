@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import shutil
 import socket
@@ -12,6 +13,12 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_file, session
 import paho.mqtt.client as mqtt
+from PIL import Image, ImageOps, UnidentifiedImageError
+from pillow_heif import register_heif_opener
+from reportlab.lib.pagesizes import A4, landscape, portrait
+from reportlab.lib.units import cm, mm
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 
 
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "50"))
@@ -59,7 +66,19 @@ PAGE_RANGES_RE = re.compile(r"^\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$")
 DOCUMENT_TTL_SECONDS = int(os.environ.get("DOCUMENT_TTL_MINUTES", "30")) * 60
 DOCUMENT_ROOT = Path(tempfile.gettempdir()) / "print-gateway-documents"
 OFFICE_EXTENSIONS = {".doc", ".docx", ".odt", ".rtf", ".xls", ".xlsx", ".ods", ".ppt", ".pptx", ".odp"}
-ACCEPTED_EXTENSIONS = OFFICE_EXTENSIONS | {".pdf"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
+ACCEPTED_EXTENSIONS = OFFICE_EXTENSIONS | IMAGE_EXTENSIONS | {".pdf"}
+IMAGE_LAYOUTS = {
+    "original": None,
+    "contain": None,
+    "stretch": None,
+    "9x13": (9 * cm, 13 * cm),
+    "10x15": (10 * cm, 15 * cm),
+    "13x18": (13 * cm, 18 * cm),
+    "15x21": (15 * cm, 21 * cm),
+}
+IMAGE_ALIGNMENTS = {"start", "center", "end"}
+register_heif_opener()
 
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
@@ -167,6 +186,113 @@ def pdf_page_count(path: Path) -> int | None:
         return int(result.stdout.strip()) if result.returncode == 0 else None
     except ValueError:
         return None
+
+
+def normalize_image(input_path: Path, workdir: Path) -> dict:
+    try:
+        with Image.open(input_path) as opened:
+            dpi = opened.info.get("dpi", (300, 300))
+            try:
+                dpi_x, dpi_y = float(dpi[0]), float(dpi[1])
+            except (TypeError, ValueError, IndexError):
+                dpi_x = dpi_y = 300
+            if not 30 <= dpi_x <= 2400:
+                dpi_x = 300
+            if not 30 <= dpi_y <= 2400:
+                dpi_y = 300
+            image = ImageOps.exif_transpose(opened)
+            if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+                rgba = image.convert("RGBA")
+                background = Image.new("RGB", rgba.size, "white")
+                background.paste(rgba, mask=rgba.getchannel("A"))
+                image = background
+            else:
+                image = image.convert("RGB")
+            normalized = workdir / "image.jpg"
+            image.save(normalized, "JPEG", quality=95, subsampling=0, dpi=(dpi_x, dpi_y))
+            metadata = {
+                "width": image.width,
+                "height": image.height,
+                "dpiX": round(dpi_x, 2),
+                "dpiY": round(dpi_y, 2),
+            }
+    except (UnidentifiedImageError, OSError, ValueError) as error:
+        raise ValueError("Nie udało się odczytać obrazu. Plik może być uszkodzony lub mieć nieobsługiwany wariant formatu.") from error
+    (workdir / "image.json").write_text(json.dumps(metadata), encoding="utf-8")
+    return metadata
+
+
+def render_image_pdf(workdir: Path, layout_mode: str, horizontal: str, vertical: str) -> dict:
+    if layout_mode not in IMAGE_LAYOUTS or horizontal not in IMAGE_ALIGNMENTS or vertical not in IMAGE_ALIGNMENTS:
+        raise ValueError("Nieprawidłowe ustawienia układu zdjęcia.")
+    image_path = workdir / "image.jpg"
+    metadata_path = workdir / "image.json"
+    if not image_path.is_file() or not metadata_path.is_file():
+        raise ValueError("Źródłowy obraz nie jest już dostępny.")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    pixel_width, pixel_height = metadata["width"], metadata["height"]
+    page_width, page_height = landscape(A4) if pixel_width > pixel_height else portrait(A4)
+    margin = 5 * mm
+    available_width = page_width - 2 * margin
+    available_height = page_height - 2 * margin
+
+    if layout_mode == "original":
+        image_width = pixel_width / metadata["dpiX"] * 72
+        image_height = pixel_height / metadata["dpiY"] * 72
+        scale = min(1, available_width / image_width, available_height / image_height)
+        image_width *= scale
+        image_height *= scale
+    elif layout_mode == "contain":
+        scale = min(available_width / pixel_width, available_height / pixel_height)
+        image_width, image_height = pixel_width * scale, pixel_height * scale
+    elif layout_mode == "stretch":
+        image_width, image_height = available_width, available_height
+    else:
+        short_edge, long_edge = IMAGE_LAYOUTS[layout_mode]
+        image_width, image_height = (
+            (long_edge, short_edge) if pixel_width > pixel_height else (short_edge, long_edge)
+        )
+
+    x_positions = {
+        "start": margin,
+        "center": (page_width - image_width) / 2,
+        "end": page_width - margin - image_width,
+    }
+    y_positions = {
+        "start": page_height - margin - image_height,
+        "center": (page_height - image_height) / 2,
+        "end": margin,
+    }
+    output_path = workdir / "preview.pdf"
+    pdf = canvas.Canvas(str(output_path), pagesize=(page_width, page_height), pageCompression=1)
+    pdf.drawImage(
+        ImageReader(str(image_path)),
+        x_positions[horizontal],
+        y_positions[vertical],
+        width=image_width,
+        height=image_height,
+        preserveAspectRatio=False,
+    )
+    pdf.showPage()
+    pdf.save()
+    rendered = subprocess.run(
+        ["pdftoppm", "-png", "-singlefile", "-r", "110", str(output_path), str(workdir / "preview")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if rendered.returncode != 0 or not (workdir / "preview.png").is_file():
+        raise ValueError("Nie udało się przygotować obrazu podglądu.")
+    return {
+        **metadata,
+        "layout": layout_mode,
+        "horizontal": horizontal,
+        "vertical": vertical,
+        "pageOrientation": "pozioma" if page_width > page_height else "pionowa",
+        "printWidthCm": round(image_width / cm, 1),
+        "printHeightCm": round(image_height / cm, 1),
+    }
 
 
 def csrf_token() -> str:
@@ -303,11 +429,11 @@ def api_prepare_document():
     cleanup_documents()
     upload = request.files.get("file")
     if not upload or not upload.filename:
-        return jsonify(error="Wybierz dokument PDF lub Office."), 400
+        return jsonify(error="Wybierz dokument lub obraz."), 400
     original_name = Path(upload.filename).name
     extension = Path(original_name).suffix.lower()
     if extension not in ACCEPTED_EXTENSIONS:
-        return jsonify(error="Obsługiwane są pliki PDF, Word, Excel, PowerPoint, OpenDocument i RTF."), 400
+        return jsonify(error="Obsługiwane są pliki PDF, Office oraz obrazy JPG, PNG i HEIC."), 400
 
     old_token = session.pop("document_token", None)
     remove_document(old_token)
@@ -318,7 +444,12 @@ def api_prepare_document():
     output_path = workdir / "preview.pdf"
     try:
         upload.save(input_path)
-        if extension == ".pdf":
+        image_info = None
+        if extension in IMAGE_EXTENSIONS:
+            image_info = normalize_image(input_path, workdir)
+            image_info = render_image_pdf(workdir, "contain", "center", "center")
+            input_path.unlink(missing_ok=True)
+        elif extension == ".pdf":
             with input_path.open("rb") as document:
                 if document.read(5) != b"%PDF-":
                     raise ValueError("Wybrany plik nie jest prawidłowym dokumentem PDF.")
@@ -352,7 +483,10 @@ def api_prepare_document():
             pages=pages,
             size=output_path.stat().st_size,
             converted=extension != ".pdf",
+            image=extension in IMAGE_EXTENSIONS,
+            imageInfo=image_info,
             previewUrl=f"/api/documents/{token}/preview",
+            imagePreviewUrl=f"/api/documents/{token}/preview-image" if extension in IMAGE_EXTENSIONS else None,
         )
     except subprocess.TimeoutExpired:
         remove_document(token)
@@ -366,12 +500,48 @@ def api_prepare_document():
         return jsonify(error="Nie udało się przygotować podglądu dokumentu."), 500
 
 
+@app.post("/api/documents/<token>/layout")
+def api_image_layout(token: str):
+    denied = require_csrf()
+    if denied:
+        return denied
+    path = current_document(token)
+    if not path:
+        return jsonify(error="Podgląd wygasł. Wybierz obraz ponownie."), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        info = render_image_pdf(
+            path.parent,
+            payload.get("layout", "contain"),
+            payload.get("horizontal", "center"),
+            payload.get("vertical", "center"),
+        )
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    return jsonify(
+        ok=True,
+        imageInfo=info,
+        size=path.stat().st_size,
+        previewUrl=f"/api/documents/{token}/preview?v={time.time_ns()}",
+        imagePreviewUrl=f"/api/documents/{token}/preview-image?v={time.time_ns()}",
+    )
+
+
 @app.get("/api/documents/<token>/preview")
 def api_document_preview(token: str):
     path = current_document(token)
     if not path:
         return jsonify(error="Podgląd wygasł. Wybierz dokument ponownie."), 404
     return send_file(path, mimetype="application/pdf", as_attachment=False, download_name="podglad.pdf", max_age=0)
+
+
+@app.get("/api/documents/<token>/preview-image")
+def api_document_image_preview(token: str):
+    path = current_document(token)
+    image_path = path.parent / "preview.png" if path else None
+    if not image_path or not image_path.is_file():
+        return jsonify(error="Podgląd obrazu wygasł. Wybierz plik ponownie."), 404
+    return send_file(image_path, mimetype="image/png", max_age=0)
 
 
 @app.post("/api/print")

@@ -43,15 +43,22 @@
         </section>
 
         <section class="document-card">
-          <div class="section-heading"><span class="step">2</span><div><h2>Dokument i podgląd</h2><p>Dodaj PDF lub plik Office i zatwierdź wygląd przed drukowaniem.</p></div></div>
+          <div class="section-heading"><span class="step">2</span><div><h2>Dokument i podgląd</h2><p>Dodaj dokument lub zdjęcie i zatwierdź wygląd przed drukowaniem.</p></div></div>
           <label class="drop" id="drop-zone" for="file">
-            <input id="file" type="file" accept=".pdf,.doc,.docx,.odt,.rtf,.xls,.xlsx,.ods,.ppt,.pptx,.odp">
+            <input id="file" type="file" accept=".pdf,.doc,.docx,.odt,.rtf,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.jpg,.jpeg,.png,.heic,.heif">
             <span class="drop-icon" aria-hidden="true">PLIK</span>
             <strong id="file-label">Wybierz dokument lub przeciągnij go tutaj</strong>
-            <small>PDF, Word, Excel, PowerPoint · maks. {{ max_upload_mb }} MB</small>
+            <small>PDF, Office, JPG, PNG, HEIC · maks. {{ max_upload_mb }} MB</small>
           </label>
           <section class="preview" id="preview" hidden>
             <div class="preview-head"><div><strong id="preview-name"></strong><small id="preview-meta"></small></div><div class="preview-actions"><a id="preview-open" target="_blank" rel="noopener">Pełny ekran</a><button id="remove-document" type="button">Zmień plik</button></div></div>
+            <div class="image-layout" id="image-layout" hidden>
+              <label><span>Rozmiar zdjęcia</span><select id="image-layout-mode"><option value="original">Oryginalny (z DPI)</option><option value="contain" selected>Dopasuj do A4 — proporcjonalnie</option><option value="stretch">Dopasuj do A4 — rozciągnij</option><option value="9x13">9 × 13 cm</option><option value="10x15">10 × 15 cm</option><option value="13x18">13 × 18 cm</option><option value="15x21">15 × 21 cm</option></select></label>
+              <label><span>Poziomo</span><select id="image-horizontal"><option value="start">Do lewej</option><option value="center" selected>Wyśrodkuj</option><option value="end">Do prawej</option></select></label>
+              <label><span>Pionowo</span><select id="image-vertical"><option value="start">Do góry</option><option value="center" selected>Wyśrodkuj</option><option value="end">Do dołu</option></select></label>
+              <small id="image-info"></small>
+            </div>
+            <img id="image-preview" class="image-preview" alt="Podgląd zdjęcia na stronie A4" hidden>
             <iframe id="preview-frame" title="Podgląd dokumentu PDF"></iframe>
           </section>
           <input type="hidden" name="document_token" id="document-token">

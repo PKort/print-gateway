@@ -28,6 +28,12 @@ h1,h2,p { margin:0; } h1 { font-size:1.35rem; letter-spacing:-.03em; } .brand p 
 .preview-actions { display:flex; gap:8px; align-items:center; }
 .preview-actions a,.preview-actions button { color:var(--text); background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:7px 9px; text-decoration:none; font-size:.78rem; }
 .preview iframe { display:block; width:100%; height:520px; border:0; background:#e5e7eb; }
+.preview iframe[hidden] { display:none; }
+.image-preview { display:block; width:100%; height:auto; max-height:720px; object-fit:contain; background:#d1d5db; }
+.image-preview[hidden] { display:none; }
+.image-layout { display:grid; grid-template-columns:2fr 1fr 1fr; gap:10px; padding:12px 14px; border-bottom:1px solid var(--line); background:#0e1726; }
+.image-layout[hidden] { display:none; }
+.image-layout small { grid-column:1 / -1; color:var(--muted); }
 .options { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:0 0 20px; }
 .printer-option { grid-column:1 / -1; }
 .range-option { grid-column:1 / -1; }
@@ -56,6 +62,6 @@ button { font:inherit; cursor:pointer; }
 .history-title { color:var(--muted); font-size:.78rem; text-transform:uppercase; letter-spacing:.09em; margin:24px 0 10px; }
 .compact .job { opacity:.72; } .compact .job small { grid-column:1 / -1; }
 @media (max-width:900px) { .print-workspace { grid-template-columns:1fr; } .drop { min-height:280px; } }
-@media (max-width:560px) { .shell { width:min(100% - 20px,1100px); padding-top:20px; } header { align-items:flex-start; } .status span:last-child { display:none; } .settings-card,.document-card { padding:15px; border-radius:17px; } .options { grid-template-columns:1fr; } .printer-option,.range-option { grid-column:auto; } .preview-head { align-items:flex-start; flex-direction:column; } .preview iframe { height:430px; } }
+@media (max-width:560px) { .shell { width:min(100% - 20px,1100px); padding-top:20px; } header { align-items:flex-start; } .status span:last-child { display:none; } .settings-card,.document-card { padding:15px; border-radius:17px; } .options { grid-template-columns:1fr; } .printer-option,.range-option { grid-column:auto; } .preview-head { align-items:flex-start; flex-direction:column; } .image-layout { grid-template-columns:1fr; } .image-layout small { grid-column:1; } .preview iframe { height:430px; } }
 @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; transition:none!important; } }
 @keyframes pulse { to { opacity:.45; } }
