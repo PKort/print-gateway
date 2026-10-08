@@ -13,8 +13,9 @@ const documentName = document.querySelector('#document-name');
 function selectedPrinter() { return printerSelect.value; }
 function updatePrinterControls(applyDefaults = false) {
   const option = printerSelect.selectedOptions[0];
-  document.querySelector('#printer-subtitle').textContent = `${option.dataset.label} · A4`;
+  document.querySelector('#printer-subtitle').textContent = `${option.dataset.label} · ${option.dataset.location} · A4`;
   document.querySelector('#color-option').hidden = option.dataset.color !== 'true';
+  document.querySelector('#power-card').hidden = option.dataset.remotePower !== 'true';
   if (applyDefaults) document.querySelector('#duplex-select').value = option.dataset.defaultDuplex;
 }
 
@@ -51,6 +52,7 @@ async function refresh() {
     const status = document.querySelector('#status'); status.className = `status ${data.status}`; status.lastElementChild.textContent = data.label;
     const powerState = data.power.state;
     const powerLabels = {on:'Włączona',off:'Wyłączona',unavailable:'Niedostępna',unknown:'Nieznany'};
+    document.querySelector('#power-card').hidden = !data.power.managed;
     document.querySelector('#power-state').textContent = data.power.managed ? (data.power.connected ? (powerLabels[powerState] || powerState) : 'Brak połączenia z HA') : 'Gniazdko jeszcze nieprzypisane';
     document.querySelector('#power-on').disabled = !data.power.managed || !data.power.connected || powerState === 'on';
     document.querySelector('#power-off').disabled = !data.power.managed || !data.power.connected || powerState === 'off';

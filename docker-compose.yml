@@ -17,6 +17,7 @@ services:
       MQTT_PASSWORD: ${MQTT_PASSWORD}
       PRINTER_HOST: 192.168.0.8
       COLOR_PRINTER_HOST: 192.168.0.7
+      XEROX_PRINTER_HOST: 192.168.0.6
     volumes:
       - /run/cups:/run/cups:ro
     ports:

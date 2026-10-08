@@ -23,7 +23,7 @@
         <section class="settings-card">
           <div class="section-heading"><span class="step">1</span><div><h2>Drukarka i ustawienia</h2><p>Wybierz urządzenie oraz parametry wydruku.</p></div></div>
           <div class="options">
-            <label class="printer-option"><span>Drukarka</span><select name="printer" id="printer-select">{% for item in printers %}<option value="{{ item.name }}" data-label="{{ item.label }}" data-color="{{ 'true' if item.color else 'false' }}" data-default-duplex="{{ item.default_duplex }}" {% if item.name == default_printer %}selected{% endif %}>{{ item.label }} · Gabinet Dół</option>{% endfor %}</select></label>
+            <label class="printer-option"><span>Drukarka</span><select name="printer" id="printer-select">{% for item in printers %}<option value="{{ item.name }}" data-label="{{ item.label }}" data-location="{{ item.location }}" data-color="{{ 'true' if item.color else 'false' }}" data-remote-power="{{ 'true' if item.remote_power else 'false' }}" data-default-duplex="{{ item.default_duplex }}" {% if item.name == default_printer %}selected{% endif %}>{{ item.label }} · {{ item.location }}</option>{% endfor %}</select></label>
             <label><span>Liczba kopii</span><input name="copies" type="number" min="1" max="20" value="1"></label>
             <label><span>Jakość</span><select name="resolution"><option value="600">600 dpi</option><option value="300">300 dpi — szybciej</option></select></label>
             <label><span>Strony</span><select name="duplex" id="duplex-select"><option value="None">Jednostronnie</option><option value="DuplexNoTumble">Dwustronnie, długi bok</option><option value="DuplexTumble">Dwustronnie, krótki bok</option></select></label>
@@ -32,7 +32,7 @@
             <label><span>Stron na arkuszu</span><select name="number_up"><option value="1">1 strona</option><option value="2">2 strony</option><option value="4">4 strony</option><option value="6">6 stron</option><option value="9">9 stron</option><option value="16">16 stron</option></select></label>
           </div>
 
-          <section class="power-card">
+          <section class="power-card" id="power-card">
             <div><span class="eyebrow">Zasilanie wybranej drukarki</span><strong id="power-state">Sprawdzanie…</strong></div>
             <div class="power-actions"><button id="power-on" type="button">Włącz</button><button id="power-off" type="button">Wyłącz</button></div>
           </section>

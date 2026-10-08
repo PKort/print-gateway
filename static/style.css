@@ -40,6 +40,7 @@ button { font:inherit; cursor:pointer; }
 .message { min-height:22px; margin-top:12px; text-align:center; color:var(--muted); font-size:.9rem; } .message.success { color:#86efac; } .message.error { color:#fca5a5; }
 .panel-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; } h2 { font-size:1.05rem; }
 .power-card { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px; margin-bottom:22px; border:1px solid var(--line); background:#0b1220; border-radius:14px; }
+.power-card[hidden] { display:none; }
 .eyebrow { display:block; color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.09em; margin-bottom:4px; }
 .power-card strong { font-size:.95rem; }
 .power-actions { display:flex; gap:7px; }

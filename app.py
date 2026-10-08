@@ -19,8 +19,10 @@ DEFAULT_PRINTER = os.environ.get("PRINTER_NAME", "LJ4000")
 PRINTERS = {
     "LJ4000": {
         "label": "HP LaserJet 4000 DTN",
+        "location": "Gabinet Dół",
         "host": os.environ.get("PRINTER_HOST", "192.168.0.8"),
         "color": False,
+        "remote_power": True,
         "power_topics": {
             "command": "print-gateway/printer/power/set",
             "state": "print-gateway/printer/power/state",
@@ -30,13 +32,24 @@ PRINTERS = {
     },
     "HP477FDN": {
         "label": "HP Color LaserJet MFP M477fdn",
+        "location": "Gabinet Dół",
         "host": os.environ.get("COLOR_PRINTER_HOST", "192.168.0.7"),
         "color": True,
+        "remote_power": True,
         "power_topics": {
             "command": "print-gateway/printer-color/power/set",
             "state": "print-gateway/printer-color/power/state",
             "get": "print-gateway/printer-color/power/get",
         },
+        "default_duplex": "DuplexNoTumble",
+    },
+    "XEROXB230": {
+        "label": "Xerox B230",
+        "location": "Gabinet Góra",
+        "host": os.environ.get("XEROX_PRINTER_HOST", "192.168.0.6"),
+        "color": False,
+        "remote_power": False,
+        "power_topics": None,
         "default_duplex": "DuplexNoTumble",
     },
 }
@@ -67,6 +80,8 @@ def on_mqtt_connect(client, _userdata, _flags, reason_code, _properties):
     if reason_code == 0:
         for config in PRINTERS.values():
             topics = config["power_topics"]
+            if not topics:
+                continue
             client.subscribe(topics["state"], qos=1)
             client.publish(topics["get"], "state", qos=1)
 
@@ -82,7 +97,11 @@ def on_mqtt_message(_client, _userdata, message):
     if state not in {"on", "off", "unavailable", "unknown"}:
         return
     printer = next(
-        (name for name, config in PRINTERS.items() if message.topic == config["power_topics"]["state"]),
+        (
+            name
+            for name, config in PRINTERS.items()
+            if config["power_topics"] and message.topic == config["power_topics"]["state"]
+        ),
         None,
     )
     if not printer:
@@ -222,9 +241,10 @@ def printer_status(printer: str) -> dict:
     text = (state.stdout or state.stderr).strip()
     lower = text.lower()
     reachable = printer_reachable(config["host"])
+    managed = config["remote_power"] and config["power_topics"] is not None
     with power_lock:
-        power_snapshot = {**power[printer], "managed": True}
-    if power_snapshot["state"] == "off":
+        power_snapshot = {**power[printer], "managed": managed}
+    if managed and power_snapshot["state"] == "off":
         status = "off"
         label = "Wyłączona"
     elif power_snapshot["state"] == "on" and not reachable:
@@ -461,6 +481,8 @@ def api_power():
         return jsonify(error="Nieznana drukarka."), 400
     if action not in {"on", "off"}:
         return jsonify(error="Nieprawidłowe polecenie zasilania."), 400
+    if not config["remote_power"] or not config["power_topics"]:
+        return jsonify(error="Ta drukarka nie ma jeszcze przypisanego gniazdka."), 409
     with power_lock:
         connected = power[_printer]["connected"]
     if not connected:
